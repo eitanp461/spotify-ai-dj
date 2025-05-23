@@ -83,25 +83,28 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
       
       // Fallback to old format for backwards compatibility (only if no playlist found yet)
       if (!foundPlaylist) {
-        const playlistMatches = data.message.match(/\[[\s\S]*?\]/g);
-        if (playlistMatches) {
-          for (const match of playlistMatches) {
-            try {
-              const playlist = JSON.parse(match);
-              if (Array.isArray(playlist) && playlist.length > 0 && playlist[0]?.artist && playlist[0]?.song) {
-                setParsedPlaylist(playlist);
-                setPlaylistName(`AI Playlist ${new Date().toLocaleDateString()}`);
-                foundPlaylist = true;
-                console.log('Successfully parsed playlist from fallback format:', playlist.length, 'songs');
-                // Hide ALL JSON arrays from display
-                displayMessage = data.message.replace(/\[[\s\S]*?\]/g, '').trim();
-                break;
-              }
-            } catch (error) {
-              // Continue trying other matches
-              continue;
+        // Look for any JSON array that looks like a playlist (starts with [ and contains artist/song objects)
+        const jsonMatch = data.message.match(/\[\s*\{[\s\S]*?\}\s*(?:,\s*\{[\s\S]*?\}\s*)*\]/);
+        if (jsonMatch) {
+          try {
+            const playlist = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(playlist) && playlist.length > 0 && playlist[0]?.artist && playlist[0]?.song) {
+              setParsedPlaylist(playlist);
+              setPlaylistName(`AI Playlist ${new Date().toLocaleDateString()}`);
+              foundPlaylist = true;
+              console.log('Successfully parsed playlist from fallback format:', playlist.length, 'songs');
+              // Remove the JSON from display
+              displayMessage = data.message.replace(jsonMatch[0], '').trim();
             }
+          } catch (error) {
+            console.log('Could not parse JSON from fallback detection:', error);
           }
+        }
+        
+        // If still no playlist found, try to remove any remaining JSON-like content
+        if (!foundPlaylist) {
+          // Remove any incomplete JSON that starts with [ but might be cut off
+          displayMessage = data.message.replace(/\[\s*\{[\s\S]*$/m, '').trim();
         }
       }
       
@@ -109,6 +112,8 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
       displayMessage = displayMessage
         .replace(/\[PLAYLIST_DATA\]/g, '')
         .replace(/\[\/PLAYLIST_DATA\]/g, '')
+        .replace(/\[\s*\{[\s\S]*$/m, '') // Remove any incomplete JSON at end
+        .replace(/^\s*\[[\s\S]*?\]\s*$/gm, '') // Remove any standalone JSON arrays
         .replace(/^\s*\n+/gm, '\n') // Remove extra blank lines
         .trim();
 

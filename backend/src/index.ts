@@ -307,9 +307,36 @@ function selectOptimalModel(
 function extractSearchTerms(message: string): string[] {
   const terms = [];
   
+  // Extract specific artist names mentioned in the message
+  const artistPatterns = [
+    /(?:by|from|artist)\s+([a-zA-Z\u0590-\u05FF\s]{2,30})/gi,
+    /([a-zA-Z\u0590-\u05FF\s]{2,30})(?:\s*-|\s+songs?|\s+music)/gi
+  ];
+  
+  for (const pattern of artistPatterns) {
+    const matches = [...message.matchAll(pattern)];
+    for (const match of matches) {
+      if (match[1] && match[1].trim().length > 2) {
+        terms.push(match[1].trim());
+      }
+    }
+  }
+  
+  // Language/region specific searches
+  if (message.toLowerCase().includes('hebrew') || /[\u0590-\u05FF]/.test(message)) {
+    terms.push('israeli music', 'hebrew songs', 'israel charts');
+  }
+  if (message.toLowerCase().includes('spanish') || message.toLowerCase().includes('español')) {
+    terms.push('latin music', 'spanish songs', 'latin charts');
+  }
+  if (message.toLowerCase().includes('korean') || message.toLowerCase().includes('k-pop')) {
+    terms.push('k-pop', 'korean music', 'korean charts');
+  }
+  
   // Common mood/genre terms for searching
   const moodGenreMap: {[key: string]: string[]} = {
     'happy': ['pop', 'upbeat', 'feel good', 'happy'],
+    'birthday': ['birthday', 'celebration', 'party', 'upbeat'],
     'sad': ['sad', 'emotional', 'ballad', 'melancholy'],
     'energetic': ['electronic', 'dance', 'high energy', 'workout'],
     'chill': ['chill', 'ambient', 'lo-fi', 'relaxing'],
@@ -336,6 +363,7 @@ function extractSearchTerms(message: string): string[] {
     terms.push('popular', 'top hits', 'chart toppers');
   }
   
+  console.log('🔍 Extracted search terms:', terms);
   return [...new Set(terms)]; // Remove duplicates
 }
 
@@ -427,13 +455,15 @@ First, show a nice human-readable list like:
 • Artist Name - Song Title
 • Artist Name - Song Title
 
-Then, immediately after (on the same response), provide the JSON array for system processing:
+Then, IMMEDIATELY after (on the same response), provide the JSON array for system processing wrapped in the exact format:
 [PLAYLIST_DATA]
 [
   {"artist": "Artist Name", "song": "Song Title"},
   {"artist": "Artist Name", "song": "Song Title"}
 ]
 [/PLAYLIST_DATA]
+
+CRITICAL: You MUST use the [PLAYLIST_DATA] wrapper tags. Do NOT just put a raw JSON array without the wrapper tags.
 
 FINAL GUIDELINES:
 - Always provide 15-25 songs when creating a playlist
@@ -444,7 +474,9 @@ FINAL GUIDELINES:
 - Be enthusiastic about creating multilingual playlists while being absolutely accurate!
 - Only provide the JSON when they're ready to actually create the playlist
 
-🎯 RAG APPROACH: When you receive a list of "CANDIDATE SONGS AVAILABLE", you MUST only select from that list. This eliminates hallucination risk completely!
+🎯 RAG APPROACH: When you receive a list of "CANDIDATE SONGS AVAILABLE", you MUST only select from that verified list. NEVER add songs not on the list. This eliminates hallucination risk completely!
+
+⚠️ MANDATORY: If you receive candidate songs, you can ONLY choose from those songs. Do not add any additional songs from your knowledge, even if they seem to fit perfectly.
 
 Remember: It's better to have fewer songs that definitely exist than to include even one made-up song, regardless of language!`
         }
