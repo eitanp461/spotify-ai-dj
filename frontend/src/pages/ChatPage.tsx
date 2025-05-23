@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Send, Loader2, Music, ExternalLink, Check } from 'lucide-react'
+import { Send, Loader2, Music, ExternalLink, Check, RotateCcw } from 'lucide-react'
 import axios from 'axios'
 
 interface ChatPageProps {
@@ -59,40 +59,58 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
     },
     onSuccess: (data) => {
       let displayMessage = data.message;
+      let foundPlaylist = false;
       
-      // Check for playlist data in the new format
+      // Check for playlist data in the new format first
       const playlistDataMatch = data.message.match(/\[PLAYLIST_DATA\]([\s\S]*?)\[\/PLAYLIST_DATA\]/);
       if (playlistDataMatch) {
         // Hide the JSON from the displayed message
-        displayMessage = data.message.replace(/\[PLAYLIST_DATA\][\s\S]*?\[\/PLAYLIST_DATA\]/, '').trim();
+        displayMessage = data.message.replace(/\[PLAYLIST_DATA\][\s\S]*?\[\/PLAYLIST_DATA\]/g, '').trim();
         
         try {
           const playlistJson = playlistDataMatch[1].trim();
           const playlist = JSON.parse(playlistJson);
-          if (Array.isArray(playlist) && playlist.length > 0 && playlist[0].artist && playlist[0].song) {
+          if (Array.isArray(playlist) && playlist.length > 0 && playlist[0]?.artist && playlist[0]?.song) {
             setParsedPlaylist(playlist);
             setPlaylistName(`AI Playlist ${new Date().toLocaleDateString()}`);
+            foundPlaylist = true;
+            console.log('Successfully parsed playlist from PLAYLIST_DATA format:', playlist.length, 'songs');
           }
         } catch (error) {
-          console.log('Could not parse playlist from AI response');
+          console.log('Could not parse playlist from PLAYLIST_DATA format:', error);
         }
-      } else {
-        // Fallback to old format for backwards compatibility
-        const playlistMatch = data.message.match(/\[[\s\S]*?\]/g);
-        if (playlistMatch) {
-          try {
-            const playlist = JSON.parse(playlistMatch[0]);
-            if (Array.isArray(playlist) && playlist.length > 0 && playlist[0].artist && playlist[0].song) {
-              setParsedPlaylist(playlist);
-              setPlaylistName(`AI Playlist ${new Date().toLocaleDateString()}`);
-              // Hide JSON from display for backwards compatibility
-              displayMessage = data.message.replace(playlistMatch[0], '').trim();
+      }
+      
+      // Fallback to old format for backwards compatibility (only if no playlist found yet)
+      if (!foundPlaylist) {
+        const playlistMatches = data.message.match(/\[[\s\S]*?\]/g);
+        if (playlistMatches) {
+          for (const match of playlistMatches) {
+            try {
+              const playlist = JSON.parse(match);
+              if (Array.isArray(playlist) && playlist.length > 0 && playlist[0]?.artist && playlist[0]?.song) {
+                setParsedPlaylist(playlist);
+                setPlaylistName(`AI Playlist ${new Date().toLocaleDateString()}`);
+                foundPlaylist = true;
+                console.log('Successfully parsed playlist from fallback format:', playlist.length, 'songs');
+                // Hide ALL JSON arrays from display
+                displayMessage = data.message.replace(/\[[\s\S]*?\]/g, '').trim();
+                break;
+              }
+            } catch (error) {
+              // Continue trying other matches
+              continue;
             }
-          } catch (error) {
-            console.log('Could not parse playlist from AI response');
           }
         }
       }
+      
+      // Clean up any remaining artifacts
+      displayMessage = displayMessage
+        .replace(/\[PLAYLIST_DATA\]/g, '')
+        .replace(/\[\/PLAYLIST_DATA\]/g, '')
+        .replace(/^\s*\n+/gm, '\n') // Remove extra blank lines
+        .trim();
 
       const aiMessage: ChatMessage = {
         role: 'assistant',
@@ -155,6 +173,18 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
     createPlaylistMutation.mutate({ name: playlistName, songs: parsedPlaylist })
   }
 
+  const handleReset = () => {
+    setMessages([{
+      role: 'assistant',
+      content: "Hi! I'm your AI DJ assistant! 🎵\n\nI can create personalized playlists directly in your Spotify account! Tell me about:\n\n• What's your current mood? (happy, chill, energetic, etc.)\n• What activity are you planning? (work, workout, party, relaxing, etc.)\n• Any favorite genres or artists?\n• Do you want high energy or chill vibes?\n\nOnce I understand what you're looking for, I'll suggest some great songs and create a playlist for you!",
+      timestamp: new Date()
+    }])
+    setParsedPlaylist(null)
+    setCreatedPlaylist(null)
+    setPlaylistName('')
+    setInputMessage('')
+  }
+
   if (!authStatus?.authenticated) {
     return (
       <div className="text-center py-16">
@@ -178,9 +208,19 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
         <div className="lg:col-span-2">
           <div className="bg-gray-800 rounded-lg h-[600px] flex flex-col">
             {/* Chat Header */}
-            <div className="p-4 border-b border-gray-700">
-              <h2 className="text-xl font-semibold">Chat with AI DJ</h2>
-              <p className="text-sm text-gray-400">Describe your perfect playlist</p>
+            <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Chat with AI DJ</h2>
+                <p className="text-sm text-gray-400">Describe your perfect playlist</p>
+              </div>
+              <button
+                onClick={handleReset}
+                className="flex items-center space-x-1 text-sm text-gray-400 hover:text-gray-300 transition-colors px-3 py-1 rounded-lg hover:bg-gray-700"
+                title="Reset conversation and playlist"
+              >
+                <RotateCcw size={16} />
+                <span>Reset</span>
+              </button>
             </div>
 
             {/* Messages */}
@@ -216,15 +256,24 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
 
             {/* Input */}
             <div className="p-4 border-t border-gray-700">
-              <div className="flex space-x-2">
-                <input
-                  type="text"
+              <div className="flex space-x-2 items-end">
+                <textarea
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Describe your ideal playlist..."
-                  className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green"
+                  onKeyDown={handleKeyPress}
+                  placeholder="Describe your ideal playlist... (Shift+Enter for new line, Enter to send)"
+                  className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green resize-none min-h-[2.5rem] max-h-32"
                   disabled={chatMutation.isPending}
+                  rows={1}
+                  style={{
+                    height: 'auto',
+                    minHeight: '2.5rem'
+                  }}
+                  onInput={(e) => {
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = 'auto';
+                    target.style.height = Math.min(target.scrollHeight, 128) + 'px';
+                  }}
                 />
                 <button
                   onClick={handleSendMessage}
