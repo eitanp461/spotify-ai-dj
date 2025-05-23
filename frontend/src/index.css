@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-gray-900 text-white min-h-screen;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-spotify-green hover:bg-green-600 text-white font-medium py-3 px-6 rounded-full transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-700 hover:bg-gray-600 text-white font-medium py-3 px-6 rounded-full transition-colors duration-200;
+  }
+  
+  .chat-message {
+    @apply p-4 rounded-lg mb-4;
+  }
+  
+  .chat-message.user {
+    @apply bg-blue-600 ml-auto max-w-xs;
+  }
+  
+  .chat-message.assistant {
+    @apply bg-gray-700 mr-auto max-w-md;
+  }
+} 
