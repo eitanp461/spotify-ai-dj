@@ -172,6 +172,173 @@ app.post('/api/auth/logout', (req, res) => {
   });
 });
 
+// Helper function to search for candidate songs
+async function searchCandidateSongs(tokens: any, searchTerms: string[]) {
+  const sdk = SpotifyApi.withAccessToken(process.env.SPOTIFY_CLIENT_ID!, tokens);
+  const candidateSongs: Array<{artist: string, song: string}> = [];
+  
+  for (const term of searchTerms) {
+    try {
+      const searchResults = await sdk.search(term, ['track'], 'US', 10);
+      for (const track of searchResults.tracks.items) {
+        candidateSongs.push({
+          artist: track.artists[0].name,
+          song: track.name
+        });
+      }
+    } catch (error) {
+      console.error(`Error searching for: ${term}`, error);
+    }
+  }
+  
+  // Remove duplicates
+  const uniqueSongs = candidateSongs.filter((song, index, self) => 
+    index === self.findIndex(s => s.artist === song.artist && s.song === song.song)
+  );
+  
+  return uniqueSongs.slice(0, 50); // Limit to top 50 candidates
+}
+
+// Helper function to detect if user wants playlist creation using GPT
+async function shouldGeneratePlaylist(message: string): Promise<boolean> {
+  try {
+    console.log('🔍 Analyzing user intent with GPT...');
+    
+    const intentAnalysis = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an intent classifier. Analyze if the user is asking to CREATE/GENERATE a playlist or select songs.
+
+RETURN ONLY: "YES" or "NO"
+
+YES if user wants to:
+- Create a playlist
+- Generate songs
+- Make a playlist  
+- Build a playlist
+- Select songs for them
+- Ready to create playlist
+- Asking for specific songs to be chosen
+
+NO if user is:
+- Just chatting about music
+- Asking questions about artists
+- Describing preferences without wanting creation
+- General conversation
+
+Examples:
+"Create a workout playlist" → YES
+"תכין לי פלייליסט לריצה" → YES  
+"Haz una lista de canciones románticas" → YES
+"I'm ready, make the playlist" → YES
+"What's your favorite genre?" → NO
+"Tell me about Taylor Swift" → NO
+"I like rock music" → NO
+
+Respond with ONLY "YES" or "NO".`
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ],
+      max_tokens: 10,
+      temperature: 0.1
+    });
+
+    const response = intentAnalysis.choices[0].message.content?.trim().toUpperCase();
+    const isPlaylistRequest = response === 'YES';
+    
+    console.log(`🔍 Intent Analysis: "${message}" → ${response} (${isPlaylistRequest ? 'PLAYLIST' : 'CHAT'})`);
+    return isPlaylistRequest;
+    
+  } catch (error) {
+    console.error('Intent analysis failed, falling back to keyword detection:', error);
+    
+    // Fallback to simple keyword detection
+    const playlistTriggers = [
+      'create', 'make', 'generate', 'build', 'playlist', 'songs',
+      'ready', 'let\'s do it', 'sounds good', 'perfect', 'yes'
+    ];
+    
+    return playlistTriggers.some(trigger => 
+      message.toLowerCase().includes(trigger.toLowerCase())
+    );
+  }
+}
+
+// Helper function to determine which model to use
+function selectOptimalModel(
+  isPlaylistGeneration: boolean, 
+  hasCandidateSongs: boolean,
+  conversationHistory: any[]
+): 'gpt-3.5-turbo' | 'gpt-4-turbo' {
+  
+  // Use GPT-4-turbo for critical tasks requiring factual accuracy
+  if (isPlaylistGeneration || hasCandidateSongs) {
+    console.log('🧠 Using GPT-4-turbo for playlist generation (high accuracy needed)');
+    return 'gpt-4-turbo';
+  }
+  
+  // Check if this looks like a factual question about music
+  const lastMessage = conversationHistory[conversationHistory.length - 1]?.content || '';
+  const factualTriggers = [
+    'who is', 'what is', 'tell me about', 'do you know', 'have you heard',
+    'is there a song', 'does exist', 'real song', 'actual song'
+  ];
+  
+  const needsFactualAccuracy = factualTriggers.some(trigger => 
+    lastMessage.toLowerCase().includes(trigger)
+  );
+  
+  if (needsFactualAccuracy) {
+    console.log('🧠 Using GPT-4-turbo for factual accuracy');
+    return 'gpt-4-turbo';
+  }
+  
+  // Use GPT-3.5-turbo for general conversation, clarifying questions
+  console.log('💬 Using GPT-3.5-turbo for general conversation (cost optimization)');
+  return 'gpt-3.5-turbo';
+}
+
+// Helper function to extract search terms from user message
+function extractSearchTerms(message: string): string[] {
+  const terms = [];
+  
+  // Common mood/genre terms for searching
+  const moodGenreMap: {[key: string]: string[]} = {
+    'happy': ['pop', 'upbeat', 'feel good', 'happy'],
+    'sad': ['sad', 'emotional', 'ballad', 'melancholy'],
+    'energetic': ['electronic', 'dance', 'high energy', 'workout'],
+    'chill': ['chill', 'ambient', 'lo-fi', 'relaxing'],
+    'workout': ['pump up', 'gym', 'motivation', 'high energy'],
+    'party': ['party', 'dance', 'club', 'upbeat'],
+    'romantic': ['romantic', 'love', 'ballad', 'slow'],
+    'rock': ['rock', 'alternative', 'indie rock'],
+    'pop': ['pop', 'mainstream', 'chart'],
+    'hip hop': ['hip hop', 'rap', 'urban'],
+    'electronic': ['electronic', 'edm', 'techno', 'house'],
+    'jazz': ['jazz', 'smooth jazz', 'bebop'],
+    'classical': ['classical', 'orchestral', 'symphony']
+  };
+  
+  // Extract genre/mood terms from message
+  for (const [key, searchTerms] of Object.entries(moodGenreMap)) {
+    if (message.toLowerCase().includes(key)) {
+      terms.push(...searchTerms);
+    }
+  }
+  
+  // Add some default popular terms if none found
+  if (terms.length === 0) {
+    terms.push('popular', 'top hits', 'chart toppers');
+  }
+  
+  return [...new Set(terms)]; // Remove duplicates
+}
+
 // Chat with AI
 app.post('/api/chat', async (req, res) => {
   if (!req.session.spotifyTokens) {
@@ -194,24 +361,65 @@ app.post('/api/chat', async (req, res) => {
       req.session.conversationHistory = [
         {
           role: 'system',
-          content: `You are a Spotify AI DJ assistant connected to the user's Spotify account. You HAVE THE ABILITY to create playlists directly in their Spotify account.
+          content: `You are a Spotify AI DJ assistant connected to the user's Spotify account. You HAVE THE ABILITY to create playlists directly in their Spotify account. You can suggest songs in ANY LANGUAGE, but you must be absolutely certain they exist.
 
-CRITICAL RULES - NEVER VIOLATE THESE:
-1. ONLY suggest songs that actually exist and are popular/well-known
-2. NEVER mix up artists with their songs - verify each song belongs to the correct artist
-3. If you're not 100% sure a song exists by that artist, DON'T include it
-4. Use only mainstream, popular songs that are likely to be on Spotify
-5. When in doubt, ask for clarification rather than guessing
+🤖 MODEL STRATEGY: This conversation uses intelligent model selection:
+- GPT-3.5-turbo for general chat and clarifying questions (cost-efficient)
+- GPT-4-turbo for playlist generation and factual accuracy (high-quality)
+You'll automatically get the best model for each task!
+
+🚨 CRITICAL ANTI-HALLUCINATION RULES - ABSOLUTELY NEVER VIOLATE THESE:
+
+1. ZERO TOLERANCE FOR MADE-UP SONGS: If you're not 100% certain a song exists with that exact title by that exact artist, DO NOT include it
+2. HIGHER STANDARDS FOR NON-ENGLISH SONGS: For songs in languages other than English, only suggest them if they are extremely well-known, internationally successful, or from major artists you're certain about
+3. VERIFY ARTIST-SONG PAIRINGS: Never mix up which artist performed which song - this is a critical error
+4. WHEN IN DOUBT, SKIP IT: If you have ANY uncertainty about a song's existence or artist, do not include it
+5. PREFER WELL-DOCUMENTED HITS: Stick to songs that have achieved significant chart success, streaming numbers, or cultural impact
+
+APPROVED SONG EXAMPLES (use songs of this caliber in ANY language):
+
+✅ ENGLISH: "The Weeknd - Blinding Lights", "Dua Lipa - Don't Start Now", "Ed Sheeran - Shape of You"
+✅ SPANISH: "Bad Bunny - Yonaguni", "Rosalía - Malamente", "Jesse & Joy - ¡Corre!"
+✅ KOREAN: "BTS - Dynamite", "BLACKPINK - DDU-DU DDU-DU", "PSY - Gangnam Style"
+✅ FRENCH: "Stromae - Alors on danse", "Indila - Dernière danse", "Zaz - Je veux"
+✅ GERMAN: "Rammstein - Du hast", "Nena - 99 Luftballons", "CRO - Easy"
+✅ PORTUGUESE: "Anitta - Envolver", "João Gilberto - The Girl from Ipanema"
+✅ ITALIAN: "Måneskin - Beggin'", "Laura Pausini - La solitudine"
+✅ JAPANESE: "One Ok Rock - Wherever You Are", "Utada Hikaru - First Love"
+✅ HEBREW: "Omer Adam - Tel Aviv", "Subliminal - Exile" (only if internationally known)
+
+CRITICAL FEW-SHOT EXAMPLES OF WHAT NOT TO DO:
+❌ BAD: "Idan Raichel - Sunset in Tel Aviv" (does not exist - made up title)
+✅ GOOD: "Idan Raichel - Mima'amakim" (real song)
+❌ BAD: "Eyal Golan - Dancing Tonight" (translation assumption)
+✅ GOOD: "Eyal Golan - Lecha Dodi" (if certain it exists)
+❌ BAD: "Taylor Swift - Bohemian Rhapsody" (wrong artist pairing)
+✅ GOOD: "Queen - Bohemian Rhapsody" (correct pairing)
+
+❌ NEVER DO THESE:
+❌ Making up song titles that "sound right" in any language
+❌ Suggesting local/regional songs you're unsure about
+❌ Mixing artists with wrong songs
+❌ Including any song you can't verify 100%
+❌ Translating English song titles into other languages and assuming they exist
+
+🧠 MANDATORY SELF-CHECK PROCESS:
+Before suggesting ANY song, ask yourself:
+1. "Is this a real song I know exists with this exact artist pairing?"
+2. "Have I heard this song or seen it on charts/streaming platforms?"
+3. "Am I 100% certain this isn't a made-up title that just sounds plausible?"
+If ANY answer is uncertain, SKIP that song immediately.
 
 Your capabilities:
-- Ask questions about musical preferences, mood, activity, and genre preferences
-- Suggest ONLY real, verifiable songs and artists
+- Ask questions about musical preferences, mood, activity, genre preferences, and language preferences
+- Suggest songs in any language, but only those you are absolutely certain exist
 - Create actual playlists in their Spotify account when ready
 
 Workflow:
-1. Ask clarifying questions about their mood, activity, genre preferences, energy level, etc.
-2. Suggest specific songs and artists that match their requirements - but ONLY songs you are certain exist
-3. When they're satisfied and ready to create the playlist, say something like "Perfect! Let me create this playlist for you now!" and provide the songs in BOTH formats:
+1. Ask clarifying questions about their mood, activity, genre preferences, energy level, preferred languages, etc.
+2. When user requests playlist creation, you will receive a list of VERIFIED CANDIDATE SONGS from Spotify's database
+3. SELECT ONLY from the provided candidate songs - never add songs not on the list
+4. When ready to create the playlist, provide the selected songs in BOTH formats:
 
 First, show a nice human-readable list like:
 🎵 Here's your perfect playlist:
@@ -227,25 +435,35 @@ Then, immediately after (on the same response), provide the JSON array for syste
 ]
 [/PLAYLIST_DATA]
 
-IMPORTANT GUIDELINES:
+FINAL GUIDELINES:
 - Always provide 15-25 songs when creating a playlist
-- Use ONLY real, popular song titles and artist names that you are confident exist
-- Double-check that each song actually belongs to the artist you're assigning it to
-- If asked for a specific artist, only include songs you KNOW are by that artist
+- When candidate songs are provided, ONLY choose from that verified list - never add others
+- If no candidate songs are provided, use your knowledge but apply maximum caution
+- Ask about language preferences if not specified
 - The JSON will be hidden from the user - they'll only see your nice formatted list
-- Be enthusiastic about creating playlists!
+- Be enthusiastic about creating multilingual playlists while being absolutely accurate!
 - Only provide the JSON when they're ready to actually create the playlist
-- If unsure about a song, skip it rather than risk including incorrect information
 
-EXAMPLE OF WHAT NOT TO DO:
-- Don't suggest "Taylor Swift - Bohemian Rhapsody" (that's by Queen)
-- Don't make up song titles that sound like they could exist
-- Don't mix artist names with wrong songs
+🎯 RAG APPROACH: When you receive a list of "CANDIDATE SONGS AVAILABLE", you MUST only select from that list. This eliminates hallucination risk completely!
 
-Be conversational, helpful, and enthusiastic about music while being absolutely accurate!`
+Remember: It's better to have fewer songs that definitely exist than to include even one made-up song, regardless of language!`
         }
       ];
       console.log('Initialized new conversation history');
+    }
+    
+    // Check if user wants to create a playlist
+    const wantsPlaylist = await shouldGeneratePlaylist(message);
+    let candidateSongs: Array<{artist: string, song: string}> = [];
+    
+    // If user wants playlist, get candidate songs from Spotify first
+    if (wantsPlaylist) {
+      console.log('=== PLAYLIST GENERATION DETECTED ===');
+      const searchTerms = extractSearchTerms(message);
+      console.log('Search Terms:', searchTerms);
+      
+      candidateSongs = await searchCandidateSongs(req.session.spotifyTokens, searchTerms);
+      console.log('Found Candidate Songs:', candidateSongs.length);
     }
     
     // Add user message to conversation
@@ -254,17 +472,58 @@ Be conversational, helpful, and enthusiastic about music while being absolutely 
       content: message
     });
     
+    // If we have candidate songs, modify the user message to include them
+    let enhancedMessage = message;
+    if (candidateSongs.length > 0) {
+      enhancedMessage = `${message}
+
+CANDIDATE SONGS AVAILABLE (choose from these verified songs):
+${candidateSongs.map(song => `• ${song.artist} - ${song.song}`).join('\n')}
+
+Please select approximately 15-25 songs from this list that best match the user's request. Only choose from this verified list.`;
+    }
+    
     console.log('Conversation History Length:', req.session.conversationHistory.length);
-    console.log('Current Conversation:', JSON.stringify(req.session.conversationHistory, null, 2));
+    console.log('Enhanced Message:', enhancedMessage);
+    
+    // Select optimal model based on task complexity and accuracy needs
+    const selectedModel = selectOptimalModel(wantsPlaylist, candidateSongs.length > 0, req.session.conversationHistory);
+    
+    // Adjust parameters based on model choice
+    const modelConfig = {
+      'gpt-3.5-turbo': {
+        maxTokens: 1000,
+        temperature: 0.3
+      },
+      'gpt-4-turbo': { // GPT-4 Turbo for better accuracy
+        maxTokens: 1000,
+        temperature: 0.2  // Lower temperature for higher accuracy
+      }
+    };
+    
+    const config = modelConfig[selectedModel];
     
     console.log('=== OPENAI API REQUEST ===');
+    console.log(`🤖 Selected Model: ${selectedModel}`);
+    console.log(`⚙️ Config:`, config);
+    
+    const messages = candidateSongs.length > 0 
+      ? [
+          ...req.session.conversationHistory.slice(0, -1), // All messages except the last user message
+          {
+            role: 'user' as const,
+            content: enhancedMessage // Use enhanced message with candidate songs
+          }
+        ]
+      : req.session.conversationHistory;
+      
     const openaiRequest = {
-      model: 'gpt-3.5-turbo',
-      messages: req.session.conversationHistory,
-      max_tokens: 1000,
-      temperature: 0.7,
+      model: selectedModel,
+      messages: messages,
+      max_tokens: config.maxTokens,
+      temperature: config.temperature,
     };
-    console.log('OpenAI Request:', JSON.stringify(openaiRequest, null, 2));
+    console.log('OpenAI Request Keys:', Object.keys(openaiRequest));
     
     // Get AI response
     const startTime = Date.now();
@@ -273,7 +532,14 @@ Be conversational, helpful, and enthusiastic about music while being absolutely 
     
     console.log('=== OPENAI API RESPONSE ===');
     console.log('Response Time:', `${endTime - startTime}ms`);
-    console.log('Response Object:', JSON.stringify(completion, null, 2));
+    console.log(`🤖 Model Used: ${selectedModel}`);
+    console.log('Usage:', completion.usage);
+    
+    // Calculate estimated cost (approximate)
+    const costPer1kTokens = selectedModel === 'gpt-4-turbo' ? 0.01 : 0.002; // GPT-4: $0.01, GPT-3.5: $0.002 per 1k tokens
+    const totalTokens = completion.usage?.total_tokens || 0;
+    const estimatedCost = (totalTokens / 1000) * costPer1kTokens;
+    console.log(`💰 Estimated Cost: $${estimatedCost.toFixed(4)} (${totalTokens} tokens)`);
     
     const aiResponse = completion.choices[0].message.content;
     console.log('AI Response Content:', aiResponse);

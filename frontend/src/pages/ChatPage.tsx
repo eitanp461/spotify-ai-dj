@@ -262,12 +262,12 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyDown={handleKeyPress}
                   placeholder="Describe your ideal playlist... (Shift+Enter for new line, Enter to send)"
-                  className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green resize-none min-h-[2.5rem] max-h-32"
+                  className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green resize-none min-h-[4rem] max-h-32"
                   disabled={chatMutation.isPending}
-                  rows={1}
+                  rows={2}
                   style={{
                     height: 'auto',
-                    minHeight: '2.5rem'
+                    minHeight: '4rem'
                   }}
                   onInput={(e) => {
                     const target = e.target as HTMLTextAreaElement;
