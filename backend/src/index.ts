@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
+import connectRedis from 'connect-redis';
+import { createClient } from 'redis';
 
 dotenv.config();
 
@@ -25,27 +27,63 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Initialize Redis client for session storage
+let redisClient: any = null;
+if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+  redisClient = createClient({ url: process.env.REDIS_URL });
+  
+  redisClient.on('error', (err: any) => {
+    console.error('Redis client error:', err);
+  });
+  
+  redisClient.on('connect', () => {
+    console.log('🔴 Redis client connected for session storage');
+  });
+  
+  redisClient.connect().catch(console.error);
+}
+
 // Middleware
+// CORS configuration
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://127.0.0.1:3000',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3000'
-  ],
-  credentials: true,
+  origin: process.env.NODE_ENV === 'production' 
+    ? process.env.FRONTEND_URL
+    : [
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3002', 
+        'http://127.0.0.1:3003',
+        'http://localhost:3000',
+        'http://localhost:3002',
+        'http://localhost:3003'
+      ],
+  credentials: true
 }));
 
 app.use(express.json());
 
-app.use(session({
+// Configure session with Redis in production, memory in development
+const sessionConfig: session.SessionOptions = {
   secret: process.env.SESSION_SECRET!,
   resave: false,
   saveUninitialized: false,
   cookie: { 
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
-}));
+};
+
+// Use Redis store in production
+if (redisClient) {
+  const RedisStore = connectRedis(session);
+  sessionConfig.store = new RedisStore({ client: redisClient });
+  console.log('🔴 Using Redis session store');
+} else {
+  console.log('💾 Using memory session store (development)');
+}
+
+app.use(session(sessionConfig));
 
 // Types
 interface SessionData {
@@ -73,6 +111,16 @@ declare module 'express-session' {
     conversationHistory?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   }
 }
+
+// Health check endpoint for Railway
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    redis: redisClient ? 'connected' : 'memory',
+    env: process.env.NODE_ENV || 'development'
+  });
+});
 
 // Spotify OAuth endpoints
 app.get('/auth/spotify/login', (req, res) => {
