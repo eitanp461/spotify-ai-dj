@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Send, Loader2, Music, ExternalLink, Check, RotateCcw } from 'lucide-react'
+import { Send, Loader2, Music, ExternalLink, Check, RotateCcw, ChevronDown, ChevronUp, Play } from 'lucide-react'
 import axios from 'axios'
 
 interface ChatPageProps {
@@ -34,6 +34,9 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
   const [parsedPlaylist, setParsedPlaylist] = useState<PlaylistSong[] | null>(null)
   const [playlistName, setPlaylistName] = useState('')
   const [createdPlaylist, setCreatedPlaylist] = useState<CreatePlaylistResponse['playlist'] | null>(null)
+  const [isChatExpanded, setIsChatExpanded] = useState(true)
+  const [isPlaylistExpanded, setIsPlaylistExpanded] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Scroll to bottom when messages change
@@ -51,6 +54,35 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
       }])
     }
   }, [authStatus, messages.length])
+
+  // Auto-expand playlist when it's created and collapse chat on mobile
+  useEffect(() => {
+    const checkMobile = () => window.innerWidth < 1024;
+    
+    if (parsedPlaylist && checkMobile()) {
+      setIsPlaylistExpanded(true)
+      setIsChatExpanded(false)
+    }
+  }, [parsedPlaylist])
+
+  // Handle window resize for responsive behavior
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 1024
+      setIsMobile(mobile)
+      
+      // On desktop, always show both panels
+      if (!mobile) {
+        setIsChatExpanded(true)
+        setIsPlaylistExpanded(true)
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    handleResize() // Check initial size
+
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   const chatMutation = useMutation({
     mutationFn: async (message: string) => {
@@ -196,6 +228,19 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
     createPlaylistMutation.mutate({ name: playlistName, songs: parsedPlaylist })
   }
 
+  const handlePlaySong = async (artist: string, song: string) => {
+    try {
+      const response = await axios.post('/api/play-track', {
+        artist,
+        song
+      })
+      console.log('Playing track:', response.data)
+    } catch (error) {
+      console.error('Failed to play track:', error)
+      alert('Failed to play track. Make sure Spotify is open and active on one of your devices.')
+    }
+  }
+
   const handleReset = () => {
     setMessages([{
       role: 'assistant',
@@ -206,6 +251,8 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
     setCreatedPlaylist(null)
     setPlaylistName('')
     setInputMessage('')
+    setIsChatExpanded(true)
+    setIsPlaylistExpanded(false)
   }
 
   if (!authStatus?.authenticated) {
@@ -216,7 +263,7 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
         <p className="text-gray-400 mb-6">You need to connect your Spotify account to use the AI DJ.</p>
         <button 
           onClick={() => window.location.href = '/auth/spotify/login'}
-          className="btn-primary"
+          className="btn-primary mx-auto"
         >
           Connect Spotify
         </button>
@@ -229,12 +276,22 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
       <div className="grid lg:grid-cols-3 gap-4 lg:gap-8">
         {/* Chat Section */}
         <div className="lg:col-span-2 order-1 lg:order-1">
-          <div className="bg-gray-800 rounded-lg h-[calc(100vh-12rem)] lg:h-[600px] flex flex-col">
+          <div className="bg-gray-800 rounded-lg flex flex-col">
             {/* Chat Header */}
             <div className="p-3 lg:p-4 border-b border-gray-700 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg lg:text-xl font-semibold">Chat with AI DJ</h2>
-                <p className="text-xs lg:text-sm text-gray-400">Describe your perfect playlist</p>
+              <div className="flex items-center space-x-2">
+                <div>
+                  <h2 className="text-lg lg:text-xl font-semibold">Chat with AI DJ</h2>
+                  <p className="text-xs lg:text-sm text-gray-400">Describe your perfect playlist</p>
+                </div>
+                {/* Mobile collapse toggle */}
+                <button
+                  onClick={() => setIsChatExpanded(!isChatExpanded)}
+                  className="lg:hidden p-1 text-gray-400 hover:text-gray-300 transition-colors"
+                  aria-label="Toggle chat"
+                >
+                  {isChatExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                </button>
               </div>
               <button
                 onClick={handleReset}
@@ -246,67 +303,71 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
               </button>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[85%] sm:max-w-xs lg:max-w-md px-3 lg:px-4 py-2 lg:py-2 rounded-lg whitespace-pre-wrap text-sm lg:text-base ${
-                      message.role === 'user'
-                        ? 'bg-spotify-green text-white'
-                        : 'bg-gray-700 text-gray-100'
-                    }`}
-                  >
-                    {message.content}
+            {/* Collapsible Messages */}
+            {(isChatExpanded || !isMobile) && (
+              <>
+                <div className="flex-1 overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 h-[calc(100vh-16rem)] lg:h-[500px]">
+                  {messages.map((message, index) => (
+                    <div
+                      key={index}
+                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[85%] sm:max-w-xs lg:max-w-md px-3 lg:px-4 py-2 lg:py-2 rounded-lg whitespace-pre-wrap text-sm lg:text-base ${
+                          message.role === 'user'
+                            ? 'bg-spotify-green text-white'
+                            : 'bg-gray-700 text-gray-100'
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                    </div>
+                  ))}
+
+                  {chatMutation.isPending && (
+                    <div className="flex justify-start">
+                      <div className="bg-gray-700 px-3 lg:px-4 py-2 rounded-lg flex items-center space-x-2 text-sm lg:text-base">
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>AI is thinking...</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Input */}
+                <div className="p-3 lg:p-4 border-t border-gray-700">
+                  <div className="flex space-x-2 items-end">
+                    <textarea
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      onKeyDown={handleKeyPress}
+                      placeholder="Describe your ideal playlist... (Shift+Enter for new line, Enter to send)"
+                      className="flex-1 bg-gray-700 text-white px-3 lg:px-4 py-2 lg:py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green resize-none min-h-[3rem] lg:min-h-[4rem] max-h-24 lg:max-h-32 text-sm lg:text-base"
+                      disabled={chatMutation.isPending}
+                      rows={2}
+                      style={{
+                        height: 'auto',
+                        minHeight: '3rem'
+                      }}
+                      onInput={(e) => {
+                        const target = e.target as HTMLTextAreaElement;
+                        target.style.height = 'auto';
+                        target.style.height = Math.min(target.scrollHeight, isMobile ? 96 : 128) + 'px';
+                      }}
+                    />
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!inputMessage.trim() || chatMutation.isPending}
+                      className="bg-spotify-green hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 lg:px-4 py-2 lg:py-2 rounded-lg transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center"
+                    >
+                      <Send size={20} />
+                    </button>
                   </div>
                 </div>
-              ))}
-
-              {chatMutation.isPending && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-700 px-3 lg:px-4 py-2 rounded-lg flex items-center space-x-2 text-sm lg:text-base">
-                    <Loader2 size={16} className="animate-spin" />
-                    <span>AI is thinking...</span>
-                  </div>
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="p-3 lg:p-4 border-t border-gray-700">
-              <div className="flex space-x-2 items-end">
-                <textarea
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyDown={handleKeyPress}
-                  placeholder="Describe your ideal playlist... (Shift+Enter for new line, Enter to send)"
-                  className="flex-1 bg-gray-700 text-white px-3 lg:px-4 py-2 lg:py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-spotify-green resize-none min-h-[3rem] lg:min-h-[4rem] max-h-24 lg:max-h-32 text-sm lg:text-base"
-                  disabled={chatMutation.isPending}
-                  rows={2}
-                  style={{
-                    height: 'auto',
-                    minHeight: '3rem'
-                  }}
-                  onInput={(e) => {
-                    const target = e.target as HTMLTextAreaElement;
-                    target.style.height = 'auto';
-                    target.style.height = Math.min(target.scrollHeight, window.innerWidth < 1024 ? 96 : 128) + 'px';
-                  }}
-                />
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || chatMutation.isPending}
-                  className="bg-spotify-green hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 lg:px-4 py-2 lg:py-2 rounded-lg transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center"
-                >
-                  <Send size={20} />
-                </button>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -315,61 +376,86 @@ const ChatPage = ({ authStatus }: ChatPageProps) => {
           {/* Playlist Creation */}
           {parsedPlaylist ? (
             <div className="bg-gradient-to-br from-spotify-green to-green-600 rounded-lg p-4 lg:p-6 text-white shadow-lg">
-              <div className="flex items-center space-x-2 mb-3 lg:mb-4">
-                <Music size={20} className="lg:hidden" />
-                <Music size={24} className="hidden lg:block" />
-                <h3 className="text-lg lg:text-xl font-bold">🎵 Your AI Playlist is Ready!</h3>
+              <div className="flex items-center justify-between mb-3 lg:mb-4">
+                <div className="flex items-center space-x-2">
+                  <Music size={20} className="lg:hidden" />
+                  <Music size={24} className="hidden lg:block" />
+                  <h3 className="text-lg lg:text-xl font-bold">🎵 Your AI Playlist is Ready!</h3>
+                </div>
+                {/* Mobile collapse toggle */}
+                <button
+                  onClick={() => setIsPlaylistExpanded(!isPlaylistExpanded)}
+                  className="lg:hidden p-1 text-green-100 hover:text-white transition-colors"
+                  aria-label="Toggle playlist"
+                >
+                  {isPlaylistExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                </button>
               </div>
               
-              <div className="bg-white/10 rounded-lg p-3 lg:p-4 mb-3 lg:mb-4">
-                <label className="block text-sm font-medium mb-2 text-green-100">Playlist Name</label>
-                <input
-                  type="text"
-                  value={playlistName}
-                  onChange={(e) => setPlaylistName(e.target.value)}
-                  className="w-full bg-white/20 text-white placeholder-green-100 px-3 py-2 lg:py-2 rounded focus:outline-none focus:ring-2 focus:ring-white/50 text-sm lg:text-base min-h-[44px]"
-                  placeholder="Enter playlist name..."
-                />
-              </div>
-
-              <div className="mb-3 lg:mb-4">
-                <p className="text-sm text-green-100 mb-2 lg:mb-3 font-medium">
-                  {parsedPlaylist.length} songs ready to add to your Spotify
-                </p>
-                <div className="bg-white/10 rounded-lg p-3 max-h-32 lg:max-h-48 overflow-y-auto">
-                  <div className="space-y-1 lg:space-y-2">
-                    {parsedPlaylist.map((song, index) => (
-                      <div key={index} className="flex items-start space-x-2 text-xs lg:text-sm">
-                        <span className="text-green-200 font-mono text-xs w-4 lg:w-6 flex-shrink-0 mt-0.5">{index + 1}.</span>
-                        <span className="text-white leading-relaxed">
-                          <span className="font-medium">{song.artist}</span> - {song.song}
-                        </span>
-                      </div>
-                    ))}
+              {/* Collapsible Playlist Content */}
+              {(isPlaylistExpanded || !isMobile) && (
+                <>
+                  <div className="bg-white/10 rounded-lg p-3 lg:p-4 mb-3 lg:mb-4">
+                    <label className="block text-sm font-medium mb-2 text-green-100">Playlist Name</label>
+                    <input
+                      type="text"
+                      value={playlistName}
+                      onChange={(e) => setPlaylistName(e.target.value)}
+                      className="w-full bg-white/20 text-white placeholder-green-100 px-3 py-2 lg:py-2 rounded focus:outline-none focus:ring-2 focus:ring-white/50 text-sm lg:text-base min-h-[44px]"
+                      placeholder="Enter playlist name..."
+                    />
                   </div>
-                </div>
-              </div>
 
-              <button
-                onClick={handleCreatePlaylist}
-                disabled={!playlistName.trim() || createPlaylistMutation.isPending}
-                className="w-full bg-white text-spotify-green font-bold py-3 lg:py-3 px-4 lg:px-6 rounded-lg hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2 min-h-[48px] text-sm lg:text-base"
-              >
-                {createPlaylistMutation.isPending ? (
-                  <>
-                    <Loader2 size={18} className="lg:hidden animate-spin" />
-                    <Loader2 size={20} className="hidden lg:block animate-spin" />
-                    <span>Creating...</span>
-                  </>
-                ) : (
-                  <>
-                    <Music size={18} className="lg:hidden" />
-                    <Music size={20} className="hidden lg:block" />
-                    <span className="lg:hidden">Create in Spotify</span>
-                    <span className="hidden lg:inline">Create Playlist in Spotify</span>
-                  </>
-                )}
-              </button>
+                  <div className="mb-3 lg:mb-4">
+                    <p className="text-sm text-green-100 mb-2 lg:mb-3 font-medium">
+                      {parsedPlaylist.length} songs ready to add to your Spotify
+                    </p>
+                    <div className="bg-white/10 rounded-lg p-3 max-h-64 lg:max-h-48 overflow-y-auto">
+                      <div className="space-y-2 lg:space-y-2">
+                        {parsedPlaylist.map((song, index) => (
+                          <div key={index} className="flex items-center justify-between text-xs lg:text-sm group">
+                            <div className="flex items-start space-x-2 flex-1 min-w-0">
+                              <span className="text-green-200 font-mono text-xs w-4 lg:w-6 flex-shrink-0 mt-0.5">{index + 1}.</span>
+                              <span className="text-white leading-relaxed truncate">
+                                <span className="font-medium">{song.artist}</span> - {song.song}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => handlePlaySong(song.artist, song.song)}
+                              className="ml-2 p-1.5 lg:p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors opacity-0 group-hover:opacity-100 lg:opacity-100 flex-shrink-0"
+                              title={`Play ${song.artist} - ${song.song}`}
+                            >
+                              <Play size={12} className="lg:hidden text-white fill-white" />
+                              <Play size={14} className="hidden lg:block text-white fill-white" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleCreatePlaylist}
+                    disabled={!playlistName.trim() || createPlaylistMutation.isPending}
+                    className="w-full bg-white text-spotify-green font-bold py-3 lg:py-3 px-4 lg:px-6 rounded-lg hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2 min-h-[48px] text-sm lg:text-base"
+                  >
+                    {createPlaylistMutation.isPending ? (
+                      <>
+                        <Loader2 size={18} className="lg:hidden animate-spin" />
+                        <Loader2 size={20} className="hidden lg:block animate-spin" />
+                        <span>Creating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Music size={18} className="lg:hidden" />
+                        <Music size={20} className="hidden lg:block" />
+                        <span className="lg:hidden">Create in Spotify</span>
+                        <span className="hidden lg:inline">Create Playlist in Spotify</span>
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="bg-gray-800 rounded-lg p-4 lg:p-6 text-center">

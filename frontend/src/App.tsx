@@ -34,7 +34,7 @@ function App() {
     const error = searchParams.get('error')
     
     if (authResult === 'success') {
-      setAuthMessage('Successfully connected to Spotify!')
+      // Just refetch auth status and clear URL params - no success message
       refetchAuth()
       // Clear URL params
       window.history.replaceState({}, document.title, window.location.pathname)
@@ -48,9 +48,7 @@ function App() {
       <Header authStatus={authStatus} refetchAuth={refetchAuth} />
       
       {authMessage && (
-        <div className={`p-4 mx-4 mt-4 rounded-lg ${
-          authMessage.includes('failed') ? 'bg-red-600' : 'bg-green-600'
-        }`}>
+        <div className="p-4 mx-4 mt-4 rounded-lg bg-red-600">
           <p>{authMessage}</p>
           <button 
             className="mt-2 text-sm underline"

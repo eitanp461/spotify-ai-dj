@@ -35,7 +35,7 @@ const HomePage = ({ authStatus }: HomePageProps) => {
             <p className="text-sm lg:text-base text-gray-400">Connect your Spotify account to get started</p>
             <button 
               onClick={() => window.location.href = '/auth/spotify/login'}
-              className="btn-primary text-base lg:text-lg min-h-[48px]"
+              className="btn-primary text-base lg:text-lg min-h-[48px] mx-auto"
             >
               Connect Spotify
             </button>
@@ -123,7 +123,7 @@ const HomePage = ({ authStatus }: HomePageProps) => {
           <p className="text-sm lg:text-base text-gray-400 mb-4 lg:mb-6 leading-relaxed">Connect your Spotify account and start chatting with our AI DJ.</p>
           <button 
             onClick={() => window.location.href = '/auth/spotify/login'}
-            className="btn-primary min-h-[48px]"
+            className="btn-primary min-h-[48px] mx-auto"
           >
             Get Started Now
           </button>

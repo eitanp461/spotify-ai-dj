@@ -83,7 +83,9 @@ app.get('/auth/spotify/login', (req, res) => {
     'playlist-modify-private',
     'user-library-read',
     'user-top-read',
-    'user-read-recently-played'
+    'user-read-recently-played',
+    'user-modify-playback-state',
+    'user-read-playback-state'
   ];
   
   const state = uuidv4();
@@ -677,6 +679,87 @@ app.post('/api/create-playlist', async (req, res) => {
   } catch (error) {
     console.error('Create playlist error:', error);
     res.status(500).json({ error: 'Failed to create playlist' });
+  }
+});
+
+// Play track on user's active device
+app.post('/api/play-track', async (req, res) => {
+  if (!req.session.spotifyTokens) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  
+  const { artist, song } = req.body;
+  
+  if (!artist || !song) {
+    return res.status(400).json({ error: 'Artist and song are required' });
+  }
+  
+  try {
+    const sdk = SpotifyApi.withAccessToken(process.env.SPOTIFY_CLIENT_ID!, req.session.spotifyTokens);
+    
+    // Search for the track
+    const searchQuery = `track:"${song}" artist:"${artist}"`;
+    const searchResults = await sdk.search(searchQuery, ['track'], 'US', 1);
+    
+    let trackUri = null;
+    
+    if (searchResults.tracks.items.length > 0) {
+      trackUri = searchResults.tracks.items[0].uri;
+    } else {
+      // Fallback: search with just song and artist name
+      const fallbackQuery = `${song} ${artist}`;
+      const fallbackResults = await sdk.search(fallbackQuery, ['track'], 'US', 1);
+      if (fallbackResults.tracks.items.length > 0) {
+        trackUri = fallbackResults.tracks.items[0].uri;
+      }
+    }
+    
+    if (!trackUri) {
+      return res.status(404).json({ error: 'Track not found on Spotify' });
+    }
+    
+    // Get user's available devices
+    const devices = await sdk.player.getAvailableDevices();
+    
+    if (devices.devices.length === 0) {
+      return res.status(400).json({ 
+        error: 'No active Spotify devices found. Please open Spotify on one of your devices and try again.' 
+      });
+    }
+    
+    // Find an active device or use the first available one
+    let targetDevice = devices.devices.find(device => device.is_active);
+    if (!targetDevice) {
+      targetDevice = devices.devices[0];
+    }
+    
+    // Start playback
+    await sdk.player.startResumePlayback(targetDevice.id!, undefined, [trackUri]);
+    
+    res.json({
+      success: true,
+      message: `Now playing: ${artist} - ${song}`,
+      track: trackUri,
+      device: targetDevice.name
+    });
+    
+  } catch (error: any) {
+    console.error('Play track error:', error);
+    
+    // Handle specific Spotify API errors
+    if (error.status === 404) {
+      return res.status(404).json({ 
+        error: 'No active device found. Please open Spotify and start playing something, then try again.' 
+      });
+    } else if (error.status === 403) {
+      return res.status(403).json({ 
+        error: 'Premium subscription required to control playback.' 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Failed to play track. Make sure Spotify is open and active on one of your devices.' 
+    });
   }
 });
 
